@@ -1,0 +1,32 @@
+{
+  "database": {
+    "dsn_env": "STUPYD_DATABASE_URL"
+  },
+  "dataloader": {
+    "batch_size": 256,
+    "num_workers": 0
+  },
+  "periods": {
+      "training" : {
+	  "begin" : 1900,
+	  "end"   : 2021
+      },
+
+      "validating" : {
+	  "begin" : 2022,
+	  "end"   : 2022
+      },
+
+      "testing" : {
+	  "begin" : 2023,
+	  "end"   : 2023
+      },
+
+      "scoring" : {
+	  "begin" : 2024,
+	  "end"   : 2100
+      }
+  },
+
+  "genders" : [ "F", "M" ]
+}
