@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>StuPYD</title>
+
+		<link rel="stylesheet" href="reveal.js/dist/reset.css">
+		<link rel="stylesheet" href="reveal.js/dist/reveal.css">
+		<link rel="stylesheet" href="reveal.js/dist/theme/dracula.css">
+
+		<!-- Theme used for syntax highlighted code -->
+		<link rel="stylesheet" href="reveal.js/plugin/highlight/monokai.css">
+
+		<style>
+			.reveal pre { width: 100%; font-size: 0.55em; }
+			.reveal table { font-size: 0.65em; }
+			.reveal h1 { font-size: 2.2em; }
+			.reveal h2 { font-size: 1.5em; }
+			.reveal img { max-height: 42vh; }
+			.reveal .small { font-size: 0.5em; }
+			/* slides carrying too much content for the frame: scale them down
+			   so that nothing bleeds over the neighbouring slide */
+			.reveal .dense { font-size: 0.9em; }
+			/* the theme lifts <small> to the top of the line box */
+			.reveal small,
+			.reveal small * {
+				display: inline;
+				vertical-align: baseline;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="reveal">
+			<div class="slides">
+				<section>
+					<h1>StuPYD</h1>
+					<p>Student Performance Yeld Detector</p>
+					<p><em>A less-than-intelligent system!</em></p>
+					<br>
+					<p>Luca Ferrari</p>
+					<p class="small">https://github.com/fluca1978/stupyd</p>
+				</section>
+
+				<section>
+					<section>
+						<h2>Architecture</h2>
+					</section>
+
+					<section class="dense">
+						<h3>What</h3>
+						<p>A playground to experiment with MLP and NNs</p>
+						<h3>Aim</h3>
+						<p>Predict students degree delay (in months) given a set of features</p>
+						<h3>Which stack</h3>
+						<ul>
+							<li>PyTorch and NumPy <small>(of course)</small></li>
+							<li>PostgreSQL <small>(and PgVector for embeddings)</small></li>
+							<li>Sqitch <small>(because I need some Perl in any case!)</small></li>
+							<li>Emacs and ElPy as IDE <small>(glad you asked!)</small></li>
+						</ul>
+					</section>
+
+					<section>
+						<h3>Approach</h3>
+						<ul>
+							<li><strong>Phase 1:</strong> import data via ETL-like approach, prepare features</li>
+							<li><strong>Phase 2:</strong> PyTorch stuff, two models defined</li>
+							<li><strong>Phase 3:</strong> PgVector embeddings <small>(just to try it, no useful features)</small></li>
+						</ul>
+						<p class="small">Part of the application has been developed with an agent support.</p>
+					</section>
+
+					<section>
+						<h3>Phase 1: database</h3>
+						<ul>
+							<li>define database structure <small>(using sqitch)</small></li>
+							<li>schema <code>src</code> mirrors original data <small>(e.g., <code>riga_libretto</code>)</small> in an anonymous (quasi) way</li>
+							<li>schema <code>public</code> contains <code>student</code>, <code>enrollment</code>, <code>course</code>, <code>department</code> and join tables</li>
+							<li>schema <code>ml</code> contains two materialized views that are used as features and read from the data loader</li>
+						</ul>
+					</section>
+
+					<section>
+					  <h3>Application overview</h3>
+					  <code>main.py</code> is the entry point, accepts commands:
+						<ul>
+
+							<li><code>train</code> or <code>predict</code>
+							  <ul>
+							    <li><small><code>--regressor</code></small></li>
+							    <li><small><code>--survival</code></small></li>
+							  </ul>
+							</li>
+							<li><code>embed</code> or <code>query</code></li>
+							<li><code>--learning-rate</code>, <code>--epochs</code>, etc.</li>
+						</ul>
+					  <p>
+					    Outputs:
+					    <ul class="small">
+					      <li >
+						PyTorch models saved into<br>
+						<code>models/&lt;model-type&gt;/yyyy_mm_dd/stupyd_model.py</code>
+					      </li>
+					      <li>
+						Predictions saved into<br/>
+						<code>models/&lt;model-type&gt;/yyyy_mm_dd/stupyd.csv</code>
+					      </li>
+					    </ul>
+					  </p>
+					  <p class="small">Configuration (<code>stupyd.json</code>) shared at run-time.</p>
+					</section>
+
+					<section>
+						<h3>Python Class Structure</h3>
+						<pre><code class="language-text" data-trim>
+torch.nn.Module
+└── StupydNormalizer               # scaling, save+load
+    └── StupydModel                # base class
+        ├── StupydRegressorModel   # one delay in months
+        └── StupydSurvivalModel    # time distribution
+
+torch.utils.data.Dataset
+└── StupydDataset                  # loads `ml` from PostgreSQL
+    └── StupydSurvivalDataset      # adds (duration, event) timeline
+
+torch.utils.data.DataLoader
+└── StupydDataLoader               # batches (or CPU crashes!)
+
+StupydCohort                       # model owner: dataset + periods + batched scoring
+├── StupydRegressorTrainer
+├── StupydRegressorPredictor       # loads the model and scores a cohort
+└── StupydSurvivalCohort           # time based model
+    ├── StupydSurvivalTrainer
+    └── StupydSurvivalPredictor    # loads a hazard checkpoint and scores
+
+StupydEmbedder                     # playground for PgVector
+						</code></pre>
+					</section>
+
+
+					<section>
+					  <h3>Configuration</h3>
+					  File <code>stupyd.json</code> contains the bootstrap configuration.
+					  The in-memory configuration is updated as the application goes on
+					  and is shared among the application parts.
+
+					  <pre>
+					    <code>
+  "periods": {
+      "training" : { "begin" : 1900, "end"   : 2021  },
+      "validating" : { "begin" : 2022, "end"   : 2022 },
+      "testing" : { "begin" : 2023, "end"   : 2023 },
+...
+					    </code>
+					  </pre>
+					</section>
+				</section>
+
+				<section>
+					<section>
+						<h2>Neural Network</h2>
+					</section>
+
+					<section>
+						<h3>Models</h3>
+						<ul>
+							<li><strong>regressor:</strong> drop students not graduated. It is foolishly sure of the delay.</li>
+							<li><strong>survival:</strong> consider six-months periods and evaluates probability of graduation and duration.</li>
+						</ul>
+						<table>
+							<thead>
+								<tr><th>Stud</th><th>Enroll</th><th>Feats</th><th>Grad</th><th>Output</th></tr>
+							</thead>
+							<tbody>
+								<tr>
+									<td>A</td><td>1/9/2018</td><td>1/9/2018 - 1/9/2019</td><td>1/9/2023</td>
+									<td>
+									  <small>
+									  regressor: <code>2023 - 2018 - 3 years</code> = <strong>24 months</strong>
+									  <br>
+									  survival: <code>(48 months duration, graduated = True)</code>
+									  </small>
+									</td>
+								</tr>
+								<tr>
+									<td>B</td><td>1/9/2018</td><td>1/9/2018 - 1/9/2019</td><td>not yet, last observed at 31/12/2025</td>
+									<td>
+									  <small>
+									  regressor: dropped (not graduated)
+									  <br>
+									  survival: <code>(76 months duration, graduated = False, probability = 0.x)</code>
+									  </small>
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</section>
+
+					<section>
+						<h3>Model</h3>
+						<pre><code class="language-python" data-trim>
+self.neural_network = nn.Sequential(
+    nn.Linear( feature_mean.numel(), 64 ),
+    nn.ReLU(),
+    nn.Dropout( 0.15 ),
+    nn.Linear( 64, 32 ),
+    nn.ReLU(),
+    nn.Linear( 32, 1 )
+)
+						</code></pre>
+					</section>
+
+					<section>
+						<h3>Loss: regressor</h3>
+						<pre><code class="language-python" data-trim>
+loss = functional.smooth_l1_loss( .. )
+						</code></pre>
+						<p>
+						  Use <i>Huber Loss</i> which acts as <i>Mean Squared Error</i> near the optimum (<code>|error| < β</code>)
+						  and <i>Mean Average Error</i> (linear) for the outliers.  
+						</p>
+
+					</section>
+					<section>
+					  <h3>Loss: survival</h3>
+						
+						<pre><code class="language-python" data-trim>
+# loss function
+loss = -( outcomes * torch.log( safe_hazard )
+          + ( 1.0 - outcomes ) * torch.log( 1.0 - safe_hazard ) )
+
+at_risk        = tensors[ "at_risk" ]
+per_enrollment = ( loss * at_risk ).sum( dim = -1 )
+return per_enrollment.mean()
+						</code></pre>
+
+					  <p>
+					    <i>Negative Log Likelihood</i>: divide time in intervals (6 months) and the loss is the negative log of the probability
+					    the model assigns to the sequence observed.
+					  </p>
+					</section>
+
+					<section>
+						<h3>Usage: training</h3>
+						<pre><code class="language-console" data-trim>
+% python stupyd/main.py train --survival
+
+Starting survival training mode (stupyd v0.1)
+
+    epochs        : 100
+    learning rate : 0.001
+    interval width: 6.0 months
+    follow-up up  : 360.0 months
+    config        : ~/git/stupyd/stupyd.json
+    output to     : ./models
+
+Training (survival): 100%|██████| 100/100 [15:36&lt;00:00, 9.37s/it]
+time axis: 60 intervals of 6 months, up to 360 months
+validation_concordance overall=0.666 F=0.650 M=0.690
+validation_median_mae_months overall=6.50 F=6.28 M=6.78
+test_concordance overall=0.671 F=0.669 M=0.677
+test_median_mae_months overall=5.55 F=5.04 M=6.18
+PyTorch survival model saved to
+           [models/survival/2026_10_15/stupyd_model.pt]
+						</code></pre>
+					</section>
+
+					<section>
+						<h3>Usage: predictions</h3>
+						<pre><code class="language-console" data-trim>
+% python stupyd/main.py predict --survival \
+   --filename models/survival/2026_10_15/stupyd_model.pt
+...
+Predictions saved to
+      [models/survival/2026_10_15/stupyd_prediction.csv]
+						</code></pre>
+					</section>
+
+					<section>
+						<h3>How smart is Stupyd?</h3>
+						<p>Short answer: <strong>it is quite stupid at doing things!</strong></p>
+						<center>
+						<img src="preview_graduation_curves.png" alt="graduation curves" align="center"
+						     width="60%" />
+						</center>
+						<small>
+						  <p>Sooner or later the probability of graduation hits 1!
+						    <br/>
+						  Did we need all this stuff then?</p>
+						</small>
+					</section>
+
+					<section class="dense">
+						<h3>Fight!</h3>
+						<p>Comparison between the models</p>
+						<center>
+						  <img src="preview_delay_histograms.png" alt="delay histograms">
+						</center>
+						<ul class="small" >
+							<li>Regressor produces negative delays and a bell-like shape.</li>
+							<li>Survival right tail reflects time expansion <small>(and possibly wrong incoming data?)</small></li>
+						</ul>
+					</section>
+				</section>
+
+				<section>
+					<section>
+						<h2>Embeddings</h2>
+					</section>
+
+					<section>
+						<h3>Embedding</h3>
+						<p>Use course description and other text information to store an array of
+						features. Use cosine distance to spot similarity.
+						Tokenizing with <code>sentence-transformers/all-MiniLM-L6-v2</code>.</p>
+						<pre><code class="language-console" data-trim>
+% python stupyd/main.py embed
+
+Starting embedding mode (stupyd v0.1)
+
+    dry run       : False
+    model         : sentence-transformers/all-MiniLM-L6-v2
+    output to     : courses.embedding
+
+Loading weights: 100%|██████| 103/103 [00:00&lt;00:00, 2890.30it/s]
+Batches: 100%|██████| 4/4 [00:00&lt;00:00, 31.17it/s]
+embedded 112 courses
+						</code></pre>
+					</section>
+
+					<section>
+						<h3>Embeddings, the bad!</h3>
+						<pre><code class="language-console" data-trim>
+% python stupyd/main.py query --query 'informatica'
+...
+courses most similar to 'informatica' (out of 1252)
+ 0.807 16-362      LM          Informatica
+ 0.807 16-262      LM          Informatica
+ 0.798 16-209      L2          Informatica
+ 0.798 16-315      L2          Informatica
+ 0.798 16-215      L2          Informatica
+ 0.679 20-202      L2          Ingegneria informatica
+ 0.674 20-262      LM          Ingegneria informatica
+ 0.674 20-362      LM          Ingegneria informatica
+ 0.652 20-253      LS          Ingegneria Informatica
+ 0.649 20-312      L2          Ingegneria Informatica (MO)
+						</code></pre>
+						<p><code>20-262</code> is better than <code>20-362</code>, which is wrong!
+						More context needed for embeddings.</p>
+					</section>
+
+					<section>
+						<h3>Embeddings, the good!</h3>
+						<pre><code class="language-console" data-trim>
+% python stupyd/main.py query --query 'excel'
+...
+courses most similar to 'excel' (out of 1252)
+    0.285 CP20-6     CP    Metodologie, Tecniche e Tool per Analisi di Big Data
+    0.265 16-362     LM    Informatica
+    0.265 16-262     LM    Informatica
+    0.250 16-209     L2    Informatica
+    0.250 16-315     L2    Informatica
+    0.250 16-215     L2    Informatica
+    0.244 B016-FI    FI    LAB SCIENZE E TECNOL INFORMATICHE
+    0.237 TFA_AC06   TFA   A245,A246 - A245 LINGUA STRANIERA (FRANCESE),
+                           A246 LINGUA E CIVILTA' STRANIERA (FRANCESE)
+    0.235 20-821     M2    Visual Computing and Multimedia Technologies
+						</code></pre>
+						<p><code>TFA_AC06</code> is better than <code>20-821</code>, again there is the need
+						for more context.</p>
+					</section>
+
+					<section>
+						<h3>Embeddings, the bonus</h3>
+						<p class="small">Comes from the LLM</p>
+						<pre><code class="language-console" data-trim>
+courses most similar to 'neural networks' (out of 1252)
+ 0.411 20-373    LM   Artificial intelligence engineering
+ 0.411 20-273    LM   Artificial intelligence engineering
+ 0.304 CP20-13   CP   School in AI: Deep Learning, Vision and Language for Industry
+ 0.295 CP20-10   CP   Cyber analyst
+ 0.293 95-1007   D2   Intelligenza Artificiale - sede Pisa - dottorato nazionale
+ 0.284 95-96     D2   Neuroscienze
+ 0.281 14-890    M1   Intelligenza artificiale per le professioni e l'impresa
+ 0.278 11-214    L2   Scienze strategiche
+ 0.278 11-204    L2   Scienze strategiche
+ 0.274 95-80     D1   NEUROSCIENZE
+						</code></pre>
+					</section>
+				</section>
+
+				<section>
+					<h2>Conclusions and future works</h2>
+					<p><strong>production un-ready!</strong></p>
+					<ul>
+						<li>playground to start working with neural networks, class hierarchy "pluggable"</li>
+						<li>a lot of parameters to be better understood <small>(learning rate, epochs, hidden layers in MLP)</small></li>
+						<li>more loss functions to try</li>
+						<li>testing and validation period could be unbalanced <small>(training 1900-2021, testing 2023, validating 2022)</small></li>
+						<li>embedding out of scope in here <small>(but hey, it's PostgreSQL!)</small></li>
+					</ul>
+				</section>
+
+
+			</div>
+		</div>
+
+		<script src="reveal.js/dist/reveal.js"></script>
+		<script src="reveal.js/plugin/notes/notes.js"></script>
+		<script src="reveal.js/plugin/markdown/markdown.js"></script>
+		<script src="reveal.js/plugin/highlight/highlight.js"></script>
+		<script>
+			// More info about initialization & config:
+			// - https://revealjs.com/initialization/
+			// - https://revealjs.com/config/
+			Reveal.initialize({
+				hash: true,
+				slideNumber: 'c/t',
+
+				// Learn about plugins: https://revealjs.com/plugins/
+				plugins: [ RevealMarkdown, RevealHighlight, RevealNotes ]
+			});
+		</script>
+	</body>
+</html>
